@@ -1,0 +1,880 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+if not player then return end
+
+--------------------------------------------------
+-- SETTINGS
+--------------------------------------------------
+
+local AIM_ENABLED = false
+local ESP_GUARD_ENABLED = false
+local ESP_SCP_ENABLED = false
+
+local selectedPlayer = nil
+local playerListOpen = true
+local aimConnection = nil
+
+--------------------------------------------------
+-- GUI
+--------------------------------------------------
+
+local playerGui = player:WaitForChild("PlayerGui")
+
+local oldGui = playerGui:FindFirstChild("PrototypeUI")
+if oldGui then oldGui:Destroy() end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PrototypeUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+--------------------------------------------------
+-- MAIN FRAME
+--------------------------------------------------
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(360, 350)
+frame.Position = UDim2.fromScale(0.5, 0.5)
+frame.AnchorPoint = Vector2.new(0.5, 0.5)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 8)
+frameCorner.Parent = frame
+
+--------------------------------------------------
+-- DRAGGING
+--------------------------------------------------
+
+local dragging = false
+local dragStart
+local startPos
+
+frame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+
+		dragging = true
+		dragStart = input.Position
+		startPos = frame.Position
+
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if not dragging then return end
+
+	if input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch then
+
+		local delta = input.Position - dragStart
+
+		frame.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+--------------------------------------------------
+-- TITLE
+--------------------------------------------------
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -20, 0, 28)
+title.Position = UDim2.fromOffset(10, 4)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextSize = 17
+title.Font = Enum.Font.GothamBold
+title.Text = "Schematics (Premium) by 4karma"
+title.Parent = frame
+
+--------------------------------------------------
+-- SCROLL
+--------------------------------------------------
+
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, -12, 1, -38)
+scrollFrame.Position = UDim2.fromOffset(6, 34)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = 6
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+scrollFrame.Parent = frame
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -10, 0, 0)
+content.BackgroundTransparency = 1
+content.AutomaticSize = Enum.AutomaticSize.Y
+content.Parent = scrollFrame
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 5)
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = content
+
+--------------------------------------------------
+-- BUTTON CREATOR
+--------------------------------------------------
+
+local function createButton(text, height)
+	local button = Instance.new("TextButton")
+
+	button.Size = UDim2.new(1, -8, 0, height or 36)
+	button.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+	button.TextColor3 = Color3.new(1, 1, 1)
+	button.TextSize = 14
+	button.Font = Enum.Font.Gotham
+	button.Text = text
+	button.BorderSizePixel = 0
+	button.AutoButtonColor = true
+	button.Parent = content
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = button
+
+	return button
+end
+
+--------------------------------------------------
+-- AIM ASSIST
+--------------------------------------------------
+
+local aimButton = createButton("Aim Assist: OFF")
+
+local function getTargetHead()
+	if not selectedPlayer
+		or selectedPlayer == player
+		or selectedPlayer.Parent ~= Players then
+		return nil
+	end
+
+	local character = selectedPlayer.Character
+	if not character then return nil end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return nil
+	end
+
+	local head = character:FindFirstChild("Head")
+
+	if not head or not head:IsA("BasePart") then
+		return nil
+	end
+
+	return head
+end
+
+local function stopAim()
+	AIM_ENABLED = false
+
+	if aimConnection then
+		aimConnection:Disconnect()
+		aimConnection = nil
+	end
+
+	aimButton.Text = "Aim Assist: OFF"
+	aimButton.BackgroundColor3 =
+		Color3.fromRGB(55, 55, 65)
+end
+
+local function startAim()
+	if not getTargetHead() then
+		return false
+	end
+
+	if aimConnection then
+		aimConnection:Disconnect()
+	end
+
+	AIM_ENABLED = true
+
+	aimConnection = RunService.RenderStepped:Connect(function()
+		if not AIM_ENABLED then return end
+
+		local head = getTargetHead()
+
+		if not head then
+			stopAim()
+			return
+		end
+
+		local camera = workspace.CurrentCamera
+		if not camera then return end
+
+		camera.CFrame = CFrame.lookAt(
+			camera.CFrame.Position,
+			head.Position
+		)
+	end)
+
+	return true
+end
+
+aimButton.MouseButton1Click:Connect(function()
+	if AIM_ENABLED then
+		stopAim()
+		return
+	end
+
+	if not selectedPlayer then
+		aimButton.Text = "Select a Player First"
+
+		task.delay(1.5, function()
+			if not AIM_ENABLED then
+				aimButton.Text = "Aim Assist: OFF"
+			end
+		end)
+
+		return
+	end
+
+	if startAim() then
+		aimButton.Text = "Aim Assist: ON"
+		aimButton.BackgroundColor3 =
+			Color3.fromRGB(35, 110, 70)
+	else
+		aimButton.Text = "Target Has No Head"
+
+		task.delay(1.5, function()
+			if not AIM_ENABLED then
+				aimButton.Text = "Aim Assist: OFF"
+			end
+		end)
+	end
+end)
+
+--------------------------------------------------
+-- TARGET LABEL
+--------------------------------------------------
+
+local selectedLabel = Instance.new("TextLabel")
+selectedLabel.Size = UDim2.new(1, -8, 0, 22)
+selectedLabel.BackgroundTransparency = 1
+selectedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+selectedLabel.TextSize = 13
+selectedLabel.Font = Enum.Font.Gotham
+selectedLabel.Text = "Target: None"
+selectedLabel.TextXAlignment = Enum.TextXAlignment.Left
+selectedLabel.Parent = content
+
+--------------------------------------------------
+-- PLAYER LIST
+--------------------------------------------------
+
+local collapseButton = createButton("▼  Player List")
+
+local playerList = Instance.new("Frame")
+playerList.Name = "PlayerList"
+playerList.Size = UDim2.new(1, -8, 0, 0)
+playerList.BackgroundTransparency = 1
+playerList.AutomaticSize = Enum.AutomaticSize.Y
+playerList.Parent = content
+
+local playerLayout = Instance.new("UIListLayout")
+playerLayout.Padding = UDim.new(0, 4)
+playerLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+playerLayout.SortOrder = Enum.SortOrder.Name
+playerLayout.Parent = playerList
+
+--------------------------------------------------
+-- PLAYER TEAM TEXT
+--------------------------------------------------
+
+local function getTeamName(targetPlayer)
+	if targetPlayer.Team then
+		return targetPlayer.Team.Name
+	end
+
+	return "No Team"
+end
+
+local function getPlayerText(targetPlayer)
+	return targetPlayer.DisplayName
+		.. " (" .. targetPlayer.Name .. ")"
+		.. " (" .. getTeamName(targetPlayer) .. ")"
+end
+
+--------------------------------------------------
+-- PLAYER BUTTON COLORS
+--------------------------------------------------
+
+local function updatePlayerButtonColors()
+	for _, object in ipairs(playerList:GetChildren()) do
+		if object:IsA("TextButton") then
+
+			local userId =
+				object:GetAttribute("UserId")
+
+			if selectedPlayer
+				and userId == selectedPlayer.UserId then
+
+				object.BackgroundColor3 =
+					Color3.fromRGB(35, 110, 70)
+			else
+				object.BackgroundColor3 =
+					Color3.fromRGB(55, 55, 65)
+			end
+		end
+	end
+end
+
+--------------------------------------------------
+-- UPDATE PLAYER BUTTON
+--------------------------------------------------
+
+local function updatePlayerButton(targetPlayer)
+	local button =
+		playerList:FindFirstChild(
+			"Player_" .. targetPlayer.UserId
+		)
+
+	if button then
+		button.Text = getPlayerText(targetPlayer)
+	end
+end
+
+--------------------------------------------------
+-- SELECT PLAYER
+--------------------------------------------------
+
+local function selectPlayer(targetPlayer)
+	if not targetPlayer
+		or targetPlayer == player then
+		return
+	end
+
+	if selectedPlayer ~= targetPlayer
+		and AIM_ENABLED then
+		stopAim()
+	end
+
+	selectedPlayer = targetPlayer
+
+	selectedLabel.Text =
+		"Target: " .. targetPlayer.Name
+
+	updatePlayerButtonColors()
+end
+
+--------------------------------------------------
+-- CREATE PLAYER BUTTON
+--------------------------------------------------
+
+local function createPlayerButton(targetPlayer)
+	if targetPlayer == player then
+		return
+	end
+
+	local buttonName =
+		"Player_" .. targetPlayer.UserId
+
+	if playerList:FindFirstChild(buttonName) then
+		return
+	end
+
+	local button = Instance.new("TextButton")
+
+	button.Name = buttonName
+	button:SetAttribute("UserId", targetPlayer.UserId)
+
+	button.Size =
+		UDim2.new(1, 0, 0, 32)
+
+	button.BackgroundColor3 =
+		Color3.fromRGB(55, 55, 65)
+
+	button.TextColor3 =
+		Color3.new(1, 1, 1)
+
+	button.TextSize = 12
+	button.Font = Enum.Font.Gotham
+	button.Text = getPlayerText(targetPlayer)
+
+	button.BorderSizePixel = 0
+	button.AutoButtonColor = true
+	button.Parent = playerList
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = button
+
+	button.MouseButton1Click:Connect(function()
+		if targetPlayer.Parent == Players then
+			selectPlayer(targetPlayer)
+		end
+	end)
+end
+
+--------------------------------------------------
+-- REMOVE PLAYER
+--------------------------------------------------
+
+local function removePlayer(targetPlayer)
+	local button =
+		playerList:FindFirstChild(
+			"Player_" .. targetPlayer.UserId
+		)
+
+	if button then
+		button:Destroy()
+	end
+
+	if selectedPlayer == targetPlayer then
+		stopAim()
+
+		selectedPlayer = nil
+		selectedLabel.Text = "Target: None"
+	end
+
+	local highlight =
+		espFolder:FindFirstChild(
+			tostring(targetPlayer.UserId)
+		)
+
+	if highlight then
+		highlight:Destroy()
+	end
+end
+
+--------------------------------------------------
+-- ESP
+--------------------------------------------------
+
+local espFolder = Instance.new("Folder")
+espFolder.Name = "ESP"
+espFolder.Parent = screenGui
+
+local function removeESP(targetPlayer)
+	local highlight =
+		espFolder:FindFirstChild(
+			tostring(targetPlayer.UserId)
+		)
+
+	if highlight then
+		highlight:Destroy()
+	end
+end
+
+local function createESP(targetPlayer, color)
+	if targetPlayer == player then return end
+
+	local character = targetPlayer.Character
+	if not character then return end
+
+	local name = tostring(targetPlayer.UserId)
+
+	local highlight =
+		espFolder:FindFirstChild(name)
+
+	if not highlight then
+		highlight = Instance.new("Highlight")
+		highlight.Name = name
+		highlight.DepthMode =
+			Enum.HighlightDepthMode.AlwaysOnTop
+		highlight.FillTransparency = 0.65
+		highlight.OutlineTransparency = 0
+		highlight.Parent = espFolder
+	end
+
+	highlight.Adornee = character
+	highlight.FillColor = color
+	highlight.OutlineColor = color
+end
+
+local function updateESP()
+	for _, targetPlayer in ipairs(Players:GetPlayers()) do
+		if targetPlayer ~= player then
+
+			local teamName = ""
+
+			if targetPlayer.Team then
+				teamName =
+					targetPlayer.Team.Name:lower()
+			end
+
+			local show = false
+			local color = Color3.new(1, 1, 1)
+
+			if ESP_GUARD_ENABLED
+				and teamName == "guard" then
+
+				show = true
+				color =
+					Color3.fromRGB(50, 150, 255)
+
+			elseif ESP_SCP_ENABLED
+				and teamName == "scp" then
+
+				show = true
+				color =
+					Color3.fromRGB(255, 70, 70)
+			end
+
+			if show then
+				createESP(targetPlayer, color)
+			else
+				removeESP(targetPlayer)
+			end
+		end
+	end
+end
+
+--------------------------------------------------
+-- ESP BUTTONS
+--------------------------------------------------
+
+local guardButton =
+	createButton("ESP Guard: OFF")
+
+guardButton.MouseButton1Click:Connect(function()
+	ESP_GUARD_ENABLED =
+		not ESP_GUARD_ENABLED
+
+	if ESP_GUARD_ENABLED then
+		guardButton.Text = "ESP Guard: ON"
+		guardButton.BackgroundColor3 =
+			Color3.fromRGB(35, 110, 70)
+	else
+		guardButton.Text = "ESP Guard: OFF"
+		guardButton.BackgroundColor3 =
+			Color3.fromRGB(55, 55, 65)
+	end
+
+	updateESP()
+end)
+
+local scpButton =
+	createButton("ESP Scp: OFF")
+
+scpButton.MouseButton1Click:Connect(function()
+	ESP_SCP_ENABLED =
+		not ESP_SCP_ENABLED
+
+	if ESP_SCP_ENABLED then
+		scpButton.Text = "ESP Scp: ON"
+		scpButton.BackgroundColor3 =
+			Color3.fromRGB(130, 45, 45)
+	else
+		scpButton.Text = "ESP Scp: OFF"
+		scpButton.BackgroundColor3 =
+			Color3.fromRGB(55, 55, 65)
+	end
+
+	updateESP()
+end)
+
+--------------------------------------------------
+-- WEAPONS
+--------------------------------------------------
+
+local minigunButton =
+	createButton("Get Minigun")
+
+local m249Button =
+	createButton("Get M249")
+
+local function getGun(gunName)
+	local equipGun =
+		ReplicatedStorage:FindFirstChild("EquipGun")
+
+	if not equipGun then
+		warn("[PrototypeUI] EquipGun not found")
+		return
+	end
+
+	equipGun:FireServer(gunName)
+end
+
+minigunButton.MouseButton1Click:Connect(function()
+	getGun("Minigun")
+end)
+
+m249Button.MouseButton1Click:Connect(function()
+	getGun("M249")
+end)
+
+--------------------------------------------------
+-- COLLAPSE
+--------------------------------------------------
+
+collapseButton.MouseButton1Click:Connect(function()
+	playerListOpen = not playerListOpen
+	playerList.Visible = playerListOpen
+
+	collapseButton.Text =
+		playerListOpen
+		and "▼  Player List"
+		or "▶  Player List"
+end)
+
+--------------------------------------------------
+-- SCP / DEPLOY SECTION SEPARATOR
+--------------------------------------------------
+
+local function createSeparator(text)
+	local separator = Instance.new("TextLabel")
+
+	separator.Size = UDim2.new(1, -8, 0, 28)
+	separator.BackgroundTransparency = 1
+	separator.TextColor3 = Color3.fromRGB(150, 150, 160)
+	separator.TextSize = 13
+	separator.Font = Enum.Font.GothamBold
+	separator.Text = "────  " .. text .. "  ────"
+	separator.Parent = content
+
+	return separator
+end
+
+--------------------------------------------------
+-- SCP
+--------------------------------------------------
+
+createSeparator("SCP")
+
+local scp035Button =
+	createButton("Become SCP-035")
+
+scp035Button.MouseButton1Click:Connect(function()
+	local facility = workspace:FindFirstChild("Facility")
+
+	if not facility then
+		warn("[PrototypeUI] Facility not found")
+		return
+	end
+
+	local special = facility:FindFirstChild("Special")
+
+	if not special then
+		warn("[PrototypeUI] Special folder not found")
+		return
+	end
+
+	local scp035 = special:FindFirstChild("SCP-035")
+
+	if not scp035 then
+		warn("[PrototypeUI] SCP-035 not found")
+		return
+	end
+
+	local clickDetector = scp035:FindFirstChild("ClickDetector")
+
+	if not clickDetector then
+		warn("[PrototypeUI] SCP-035 ClickDetector not found")
+		return
+	end
+
+	fireclickdetector(clickDetector)
+end)
+
+--------------------------------------------------
+-- DEPLOY
+--------------------------------------------------
+
+createSeparator("Deploy")
+
+local deployEpsilon9Button =
+	createButton("Deploy Epsilon-9")
+
+deployEpsilon9Button.MouseButton1Click:Connect(function()
+	local facility = workspace:FindFirstChild("Facility")
+
+	if not facility then
+		warn("[PrototypeUI] Facility not found")
+		return
+	end
+
+	local special = facility:FindFirstChild("Special")
+
+	if not special then
+		warn("[PrototypeUI] Special folder not found")
+		return
+	end
+
+	local spawnPanel = special:FindFirstChild("MTF Spawn Panel")
+
+	if not spawnPanel then
+		warn("[PrototypeUI] MTF Spawn Panel not found")
+		return
+	end
+
+	local detector =
+		spawnPanel.SpawnPanel.Frame.Epsilon9.ClickPart:FindFirstChild("ClickDetector")
+
+	if not detector then
+		warn("[PrototypeUI] Epsilon9 ClickDetector not found")
+		return
+	end
+
+	fireclickdetector(detector)
+end)
+
+local deployNu7Button =
+	createButton("Deploy Nu-7")
+
+deployNu7Button.MouseButton1Click:Connect(function()
+	local facility = workspace:FindFirstChild("Facility")
+
+	if not facility then
+		warn("[PrototypeUI] Facility not found")
+		return
+	end
+
+	local special = facility:FindFirstChild("Special")
+
+	if not special then
+		warn("[PrototypeUI] Special folder not found")
+		return
+	end
+
+	local spawnPanel = special:FindFirstChild("MTF Spawn Panel")
+
+	if not spawnPanel then
+		warn("[PrototypeUI] MTF Spawn Panel not found")
+		return
+	end
+
+	local clickPart =
+		spawnPanel.SpawnPanel.Frame.Nu7:FindFirstChild("ClickPart")
+
+	if not clickPart then
+		warn("[PrototypeUI] Nu7 ClickPart not found")
+		return
+	end
+
+	fireclickdetector(clickPart)
+end)
+
+local deployEta10Button =
+	createButton("Deploy Eta-10")
+
+deployEta10Button.MouseButton1Click:Connect(function()
+	local facility = workspace:FindFirstChild("Facility")
+
+	if not facility then
+		warn("[PrototypeUI] Facility not found")
+		return
+	end
+
+	local special = facility:FindFirstChild("Special")
+
+	if not special then
+		warn("[PrototypeUI] Special folder not found")
+		return
+	end
+
+	local spawnPanel = special:FindFirstChild("MTF Spawn Panel")
+
+	if not spawnPanel then
+		warn("[PrototypeUI] MTF Spawn Panel not found")
+		return
+	end
+
+	local detector =
+		spawnPanel.SpawnPanel.Frame.Eta10.ClickPart:FindFirstChild("ClickDetector")
+
+	if not detector then
+		warn("[PrototypeUI] Eta10 ClickDetector not found")
+		return
+	end
+
+	fireclickdetector(detector)
+end)
+
+--------------------------------------------------
+-- PLAYER EVENTS
+--------------------------------------------------
+
+local function setupPlayer(targetPlayer)
+	if targetPlayer == player then return end
+
+	targetPlayer.CharacterAdded:Connect(function()
+		task.wait(0.5)
+		updateESP()
+	end)
+
+	targetPlayer:GetPropertyChangedSignal("Team")
+		:Connect(function()
+
+			updatePlayerButton(targetPlayer)
+			updateESP()
+
+		end)
+end
+
+for _, targetPlayer in ipairs(Players:GetPlayers()) do
+	createPlayerButton(targetPlayer)
+	setupPlayer(targetPlayer)
+end
+
+Players.PlayerAdded:Connect(function(targetPlayer)
+	createPlayerButton(targetPlayer)
+	setupPlayer(targetPlayer)
+	updateESP()
+end)
+
+Players.PlayerRemoving:Connect(function(targetPlayer)
+	removePlayer(targetPlayer)
+end)
+
+--------------------------------------------------
+-- MOBILE TOGGLE
+--------------------------------------------------
+
+local toggleButton = Instance.new("TextButton")
+
+toggleButton.Size =
+	UDim2.fromOffset(40, 40)
+
+toggleButton.Position =
+	UDim2.new(0, 15, 0.5, 0)
+
+toggleButton.AnchorPoint =
+	Vector2.new(0, 0.5)
+
+toggleButton.BackgroundColor3 =
+	Color3.fromRGB(45, 45, 55)
+
+toggleButton.TextColor3 =
+	Color3.new(1, 1, 1)
+
+toggleButton.TextSize = 20
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.Text = "Z"
+toggleButton.BorderSizePixel = 0
+toggleButton.Parent = screenGui
+
+-- Square button instead of circular button
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 6)
+toggleCorner.Parent = toggleButton
+
+toggleButton.MouseButton1Click:Connect(function()
+	frame.Visible = not frame.Visible
+end)
+
+--------------------------------------------------
+-- INITIALIZE
+--------------------------------------------------
+
+updateESP()
+
+print("[Schematics] Loaded successfully")
